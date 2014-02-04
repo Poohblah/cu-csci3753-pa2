@@ -1,0 +1,17 @@
+#Temporary Editor Files#
+*~
+\#*\#
+*.swp
+
+#Build Files#
+lookup
+pthread-hello
+queueTest
+*.o
+
+#Output Files#
+output.txt
+
+#LaTeX Cruf#
+handout/*.log
+handout/*.aux
