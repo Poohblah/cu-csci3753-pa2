@@ -11,6 +11,7 @@ queueTest
 
 #Output Files#
 output.txt
+results.txt
 
 #LaTeX Cruf#
 handout/*.log

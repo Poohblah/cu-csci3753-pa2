@@ -35,3 +35,6 @@ clean:
 	rm -f *.o
 	rm -f *~
 	rm -f results.txt
+
+run: lookup
+	./lookup input/names*.txt results.txt
