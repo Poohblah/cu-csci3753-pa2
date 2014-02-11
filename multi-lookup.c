@@ -44,6 +44,7 @@ void* thread_read_ifile (void* a) {
         char errorstr[SBUFSIZE];
         sprintf(errorstr, "Error Opening Input File: %s", args->fname);
         perror(errorstr);
+        return NULL;
     }	
     
     /* Read File and Process*/
