@@ -21,6 +21,17 @@
 #define USAGE "<inputFilePath> <outputFilePath>"
 #define INPUTFS "%1024s"
 
+bool request_queue_finished = false;
+
+void microsleep () {
+    struct timespec ts;
+    ts.tv_sec = 0;
+    srand(time(NULL));
+    ts.tv_nsec = rand() % 100000;
+    nanosleep(&ts, &ts);
+    return;
+}
+
 void* thread_read_ifile (thread_request_arg_t* args) {
 
     fprintf(stdout, "hello from read file thread\n");
@@ -50,13 +61,22 @@ void* thread_read_ifile (thread_request_arg_t* args) {
             pthread_mutex_lock(args->mutex_queue);
             
             if (queue_is_full(args->request_queue)) {
+
                 /* Wait for queue if full */
                 ts.tv_nsec = rand() % 100000;
                 nanosleep(&ts, &ts);
+
             } else {
+
+                /* malloc space for the hostname */
+                int hs = sizeof(hostname);
+                char* hp = malloc(hs);
+                strncpy(hp, hostname, hs);
+
                 /* Add hostname to queue */
-                fprintf(stdout, "adding hostname to queue (%s): %s\n",args->fname, hostname);
-                queue_push(args->request_queue, hostname);
+                fprintf(stdout, "adding hostname to queue (%s): %s\n",args->fname, hp);
+                queue_push(args->request_queue, hp);
+
                 /* Unlock request queue mutex */
                 pthread_mutex_unlock(args->mutex_queue);
                 break;
@@ -77,28 +97,52 @@ void* thread_read_ifile (thread_request_arg_t* args) {
 
 void* thread_dnslookup (thread_resolve_arg_t* args) {
 
-    return NULL;
-
     /* While true*/
-
-    /* Lock queue mutex */
-
-    /* Exit if queue is empty and requester threads have finished */
-
-    /* Pop hostname off queue, unlock mutex, lookup hostname and get IP string */
-    char hostname[SBUFSIZE];
-    char firstipstr[INET6_ADDRSTRLEN];
-    if(dnslookup(hostname, firstipstr, sizeof(firstipstr))
-       == UTIL_FAILURE){
-        fprintf(stderr, "dnslookup error: %s\n", hostname);
-        strncpy(firstipstr, "", sizeof(firstipstr));
-    }
+    while (1) {
     
-    /* Lock output file mutex, write to file, unlock mutex */
-    fprintf(args->outputfp, "%s,%s\n", hostname, firstipstr);
+        /* Lock queue mutex, pop item, unlock mutex */
+        pthread_mutex_lock(args->mutex_queue);
+        char* hostnamep = queue_pop(args->rqueue);
+        pthread_mutex_unlock(args->mutex_queue);
 
-    /* End while */
+        /* If queue is not empty, read a hostname and look it up */
+        if (hostnamep) {
+            char hostname[SBUFSIZE];
+            sprintf(hostname, hostnamep);
+            free(hostnamep);
+            fprintf(stdout, "looking up hostname: %s\n", hostname);
 
+            /* Lookup hostname and get IP string */
+
+            char firstipstr[INET6_ADDRSTRLEN];
+            if (dnslookup(hostname, firstipstr, sizeof(firstipstr))
+               == UTIL_FAILURE){
+                fprintf(stderr, "dnslookup error: %s\n", hostname);
+                strncpy(firstipstr, "", sizeof(firstipstr));
+            }
+            
+            /* Lock output file mutex, write to file, unlock mutex */
+            fprintf(stdout, "%s,%s\n", hostname, firstipstr);
+            pthread_mutex_lock(args->mutex_ofile);
+            fprintf(args->outputfp, "%s,%s\n", hostname, firstipstr);
+            pthread_mutex_unlock(args->mutex_ofile);
+    
+        /* If queue is empty, check if requester threads have finished */
+        } else {
+
+            /* Exit if requester threads have finished */
+            if (request_queue_finished) { break; }
+
+            /* Sleep if requester threads are still active */
+            else { microsleep(); }
+
+        }
+    
+        /* End while */
+
+    }
+
+    return NULL;
 }
 
 int main(int argc, char* argv[]){
@@ -113,7 +157,6 @@ int main(int argc, char* argv[]){
     fprintf(stdout, "local variables\n");
     /* Local variables */
     FILE* outputfp = NULL;
-    bool request_queue_finished = false;
     queue request_queue;
     int request_queue_size = QUEUEMAXSIZE;
     pthread_t threads_request[argc-1];
@@ -174,16 +217,22 @@ int main(int argc, char* argv[]){
         fprintf(stdout, "waiting for thread %d to terminate...\n", i);
 	int rv = pthread_join(threads_request[i], NULL);
 	if (rv) {
-            fprintf(stderr, "an error!!! ahhh!!! %d\n", rv);
+            fprintf(stderr, "Error: pthread_join on requester thread returned %d\n", rv);
         }
     }
     request_queue_finished = true;
+    // char* hostnamep;
+    // char hostname[SBUFSIZE];
+    // while (hostnamep = queue_pop(&request_queue)) {
+    //         sprintf(hostname, hostnamep);
+    //         fprintf(stdout, "Queued hostname: %s\n", hostname);
+    // }
 
     /* Join resolver threads and wait for them to finish */
     for(i=0; i<MAX_RESOLVER_THREADS; i++){
 	int rv = pthread_join(threads_resolve[i], NULL);
 	if (rv) {
-            fprintf(stderr, "a terrible problem!! ahhh!!! %d\n", rv);
+            fprintf(stderr, "Error: pthread_join on resolver thread returned %d\n", rv);
         }
     }
 

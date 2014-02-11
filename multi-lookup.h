@@ -3,6 +3,8 @@
 
 #define MAX_RESOLVER_THREADS 5
 
+extern bool request_queue_finished;
+
 typedef struct {
     char* fname;
     queue* request_queue;
