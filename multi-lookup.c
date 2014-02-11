@@ -11,20 +11,52 @@
 #include <string.h>
 #include <errno.h>
 #include <pthread.h>
+
 #include "queue.h"
-
 #include "util.h"
+#include "multi-lookup.h"
 
+#define SBUFSIZE 1025
 #define MINARGS 3
 #define USAGE "<inputFilePath> <outputFilePath>"
-#define SBUFSIZE 1025
 #define INPUTFS "%1024s"
-#define MAX_RESOLVER_THREADS 5
 
-void thread_dnslookup (queue* rqueue,
+void* thread_read_ifile (thread_request_arg_t args) {
+
+    return NULL;
+
+    FILE* inputfp = NULL;
+    
+    /* Open Input File */
+    inputfp = fopen(args.fname, "r");
+    if(!inputfp){
+        char errorstr[SBUFSIZE];
+        sprintf(errorstr, "Error Opening Input File: %s", args.fname);
+        perror(errorstr);
+    }	
+    
+    /* Read File and Process*/
+    char hostname[SBUFSIZE];
+    while(fscanf(inputfp, INPUTFS, hostname) > 0){
+
+        /* Lock request queue mutex */
+
+        /* Add hostname to queue */
+
+        /* Unlock request queue mutex */
+    
+    }
+    
+    /* Close Input File */
+    fclose(inputfp);
+}
+
+void* thread_dnslookup (queue* rqueue,
                        FILE* outputfp,
                        pthread_mutex_t* mutex_ofile,
                        pthread_mutex_t* mutex_queue) {
+
+    return NULL;
 
     /* While true*/
 
@@ -48,36 +80,6 @@ void thread_dnslookup (queue* rqueue,
 
 }
 
-void thread_read_ifile(char* fname,
-                       queue* request_queue,
-                       pthread_mutex_t* mutex_queue,
-                       char errorstr[SBUFSIZE]) {
-
-    FILE* inputfp = NULL;
-    
-    /* Open Input File */
-    inputfp = fopen(fname, "r");
-    if(!inputfp){
-        sprintf(errorstr, "Error Opening Input File: %s", fname);
-        perror(errorstr);
-    }	
-    
-    /* Read File and Process*/
-    char hostname[SBUFSIZE];
-    while(fscanf(inputfp, INPUTFS, hostname) > 0){
-
-        /* Lock request queue mutex */
-
-        /* Add hostname to queue */
-
-        /* Unlock request queue mutex */
-    
-    }
-    
-    /* Close Input File */
-    fclose(inputfp);
-}
-
 int main(int argc, char* argv[]){
     
     /* Sanity check */
@@ -87,14 +89,18 @@ int main(int argc, char* argv[]){
 	return EXIT_FAILURE;
     }
 
+    fprintf(stdout, "local variables\n");
     /* Local variables */
     FILE* outputfp = NULL;
     char errorstr[SBUFSIZE];
     bool request_queue_finished = false;
     queue request_queue;
     int request_queue_size = QUEUEMAXSIZE;
+    pthread_t threads_request[argc-1];
+    pthread_t threads_resolve[MAX_RESOLVER_THREADS];
     int i;
 
+    fprintf(stdout, "open output file\n");
     /* Open Output File */
     outputfp = fopen(argv[(argc-1)], "w");
     if(!outputfp){
@@ -102,6 +108,7 @@ int main(int argc, char* argv[]){
 	return EXIT_FAILURE;
     }
 
+    fprintf(stdout, "create queues and mutexen\n");
     /* Create request queue */
     queue_init(&request_queue, request_queue_size);
 
@@ -109,24 +116,47 @@ int main(int argc, char* argv[]){
     pthread_mutex_t mutex_queue = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_t mutex_ofile = PTHREAD_MUTEX_INITIALIZER;
 
+    fprintf(stdout, "req threads\n");
     /* Spawn requester thread for each input file */
     for(i=1; i<(argc-1); i++){
-	
+        thread_request_arg_t args;
+        args.fname = argv[i];
+        args.request_queue = &request_queue;
+        args.mutex_queue = &mutex_queue;
+	int rc = pthread_create(threads_request[i-1], NULL, thread_read_ifile, NULL);
+	if (rc){
+	    printf("Error creating request thread: return code from pthread_create() is %d\n", rc);
+	    exit(EXIT_FAILURE);
+	}
     }
 
+    fprintf(stdout, "res threads\n");
     /* Spawn resolver threads up to MAX_RESOLVER_THREADS */
     for(i=0; i<MAX_RESOLVER_THREADS; i++){
-	
+        fprintf(stdout, "thread #%d\n", i);
+	int rc = pthread_create(&(threads_resolve[i]), NULL, thread_dnslookup, NULL);
+	if (rc){
+	    printf("Error creating resolver thread: return code from pthread_create() is %d\n", rc);
+	    exit(EXIT_FAILURE);
+	}
     }
 
+    fprintf(stdout, "join req threads\n");
     /* Join requester threads and wait for them to finish */
+    for(i=0; i<argc-2; i++){
+	pthread_join(&(threads_request[i]), NULL);
+    }
     request_queue_finished = true;
 
     /* Join resolver threads and wait for them to finish */
+    for(i=0; i<MAX_RESOLVER_THREADS; i++){
+	pthread_join(threads_resolve[i], NULL);
+    }
 
     /* Destroy queue */
+    queue_cleanup(&request_queue);
 
-    /* Close Output File */
+    /* Close output file */
     fclose(outputfp);
 
     /* Destroy mutexen */
