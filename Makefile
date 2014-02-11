@@ -41,3 +41,6 @@ clean:
 
 run: lookup
 	./lookup input/names*.txt results.txt
+
+run-multi: multi-lookup
+	./multi-lookup input/names*.txt results.txt
