@@ -16,8 +16,8 @@ typedef struct {
     pthread_mutex_t* mutex_queue;
 } thread_resolve_arg_t ;
 
-void* thread_read_ifile (thread_request_arg_t);
+void* thread_read_ifile (thread_request_arg_t*);
 
-void* thread_dnslookup (thread_resolve_arg_t);
+void* thread_dnslookup (thread_resolve_arg_t*);
 
 #endif

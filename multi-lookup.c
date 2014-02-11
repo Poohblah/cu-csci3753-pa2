@@ -21,17 +21,18 @@
 #define USAGE "<inputFilePath> <outputFilePath>"
 #define INPUTFS "%1024s"
 
-void* thread_read_ifile (thread_request_arg_t args) {
+void* thread_read_ifile (thread_request_arg_t* args) {
 
-    return NULL;
-
+    fprintf(stdout, "hello from read file thread\n");
     FILE* inputfp = NULL;
     
     /* Open Input File */
-    inputfp = fopen(args.fname, "r");
+        
+    fprintf(stdout, "reading from input file: %s\n", args->fname);
+    inputfp = fopen(args->fname, "r");
     if(!inputfp){
         char errorstr[SBUFSIZE];
-        sprintf(errorstr, "Error Opening Input File: %s", args.fname);
+        sprintf(errorstr, "Error Opening Input File: %s", args->fname);
         perror(errorstr);
     }	
     
@@ -40,18 +41,24 @@ void* thread_read_ifile (thread_request_arg_t args) {
     while(fscanf(inputfp, INPUTFS, hostname) > 0){
 
         /* Lock request queue mutex */
+        pthread_mutex_lock(args->mutex_queue);
 
         /* Add hostname to queue */
+        
+        fprintf(stdout, "adding hostname to queue: %s\n", hostname);
 
         /* Unlock request queue mutex */
+        pthread_mutex_unlock(args->mutex_queue);
     
     }
     
     /* Close Input File */
     fclose(inputfp);
+
+    return NULL;
 }
 
-void* thread_dnslookup (thread_resolve_arg_t args) {
+void* thread_dnslookup (thread_resolve_arg_t* args) {
 
     return NULL;
 
@@ -71,7 +78,7 @@ void* thread_dnslookup (thread_resolve_arg_t args) {
     }
     
     /* Lock output file mutex, write to file, unlock mutex */
-    fprintf(args.outputfp, "%s,%s\n", hostname, firstipstr);
+    fprintf(args->outputfp, "%s,%s\n", hostname, firstipstr);
 
     /* End while */
 
@@ -114,12 +121,14 @@ int main(int argc, char* argv[]){
 
     fprintf(stdout, "req threads\n");
     /* Spawn requester thread for each input file */
+    thread_request_arg_t req_args[argc-2];
     for(i=1; i<(argc-1); i++){
-        thread_request_arg_t args;
-        args.fname = argv[i];
-        args.request_queue = &request_queue;
-        args.mutex_queue = &mutex_queue;
-	int rc = pthread_create(threads_request[i-1], NULL, thread_read_ifile, &args);
+        fprintf(stdout, "creating args for thread: %d\n", i);
+        req_args[i-1].fname = argv[i];
+        req_args[i-1].request_queue = &request_queue;
+        req_args[i-1].mutex_queue = &mutex_queue;
+        fprintf(stdout, "creating thread for input file: %s\n", req_args[i-1].fname);
+	int rc = pthread_create(&(threads_request[i-1]), NULL, thread_read_ifile, &(req_args[i-1]));
 	if (rc){
 	    printf("Error creating request thread: return code from pthread_create() is %d\n", rc);
 	    exit(EXIT_FAILURE);
@@ -128,14 +137,14 @@ int main(int argc, char* argv[]){
 
     fprintf(stdout, "res threads\n");
     /* Spawn resolver threads up to MAX_RESOLVER_THREADS */
-    thread_resolve_arg_t args;
-    args.rqueue = &request_queue;
-    args.outputfp = outputfp;
-    args.mutex_ofile = &mutex_ofile;
-    args.mutex_queue = &mutex_queue;
+    thread_resolve_arg_t res_args;
+    res_args.rqueue = &request_queue;
+    res_args.outputfp = outputfp;
+    res_args.mutex_ofile = &mutex_ofile;
+    res_args.mutex_queue = &mutex_queue;
     for(i=0; i<MAX_RESOLVER_THREADS; i++){
         fprintf(stdout, "thread #%d\n", i);
-	int rc = pthread_create(&(threads_resolve[i]), NULL, thread_dnslookup, &args);
+	int rc = pthread_create(&(threads_resolve[i]), NULL, thread_dnslookup, &res_args);
 	if (rc){
 	    printf("Error creating resolver thread: return code from pthread_create() is %d\n", rc);
 	    exit(EXIT_FAILURE);
@@ -145,6 +154,7 @@ int main(int argc, char* argv[]){
     fprintf(stdout, "join req threads\n");
     /* Join requester threads and wait for them to finish */
     for(i=0; i<argc-2; i++){
+        fprintf(stdout, "waiting for thread %d to terminate...\n", i);
 	pthread_join(&(threads_request[i]), NULL);
     }
     request_queue_finished = true;
