@@ -40,15 +40,32 @@ void* thread_read_ifile (thread_request_arg_t* args) {
     char hostname[SBUFSIZE];
     while(fscanf(inputfp, INPUTFS, hostname) > 0){
 
-        /* Lock request queue mutex */
-        pthread_mutex_lock(args->mutex_queue);
-
         /* Add hostname to queue */
-        
-        fprintf(stdout, "adding hostname to queue: %s\n", hostname);
+        struct timespec ts;
+        ts.tv_sec = 0;
+        srand(time(NULL));
+        while (1) {
 
-        /* Unlock request queue mutex */
-        pthread_mutex_unlock(args->mutex_queue);
+            /* Lock request queue mutex */
+            pthread_mutex_lock(args->mutex_queue);
+            
+            if (queue_is_full(args->request_queue)) {
+                /* Wait for queue if full */
+                ts.tv_nsec = rand() % 100000;
+                nanosleep(&ts, &ts);
+            } else {
+                /* Add hostname to queue */
+                fprintf(stdout, "adding hostname to queue (%s): %s\n",args->fname, hostname);
+                queue_push(args->request_queue, hostname);
+                /* Unlock request queue mutex */
+                pthread_mutex_unlock(args->mutex_queue);
+                break;
+            }
+
+            /* Unlock request queue mutex */
+            pthread_mutex_unlock(args->mutex_queue);
+
+        }
     
     }
     
@@ -155,13 +172,19 @@ int main(int argc, char* argv[]){
     /* Join requester threads and wait for them to finish */
     for(i=0; i<argc-2; i++){
         fprintf(stdout, "waiting for thread %d to terminate...\n", i);
-	pthread_join(&(threads_request[i]), NULL);
+	int rv = pthread_join(threads_request[i], NULL);
+	if (rv) {
+            fprintf(stderr, "an error!!! ahhh!!! %d\n", rv);
+        }
     }
     request_queue_finished = true;
 
     /* Join resolver threads and wait for them to finish */
     for(i=0; i<MAX_RESOLVER_THREADS; i++){
-	pthread_join(threads_resolve[i], NULL);
+	int rv = pthread_join(threads_resolve[i], NULL);
+	if (rv) {
+            fprintf(stderr, "a terrible problem!! ahhh!!! %d\n", rv);
+        }
     }
 
     /* Destroy queue */
