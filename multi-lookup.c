@@ -51,10 +51,7 @@ void* thread_read_ifile (thread_request_arg_t args) {
     fclose(inputfp);
 }
 
-void* thread_dnslookup (queue* rqueue,
-                       FILE* outputfp,
-                       pthread_mutex_t* mutex_ofile,
-                       pthread_mutex_t* mutex_queue) {
+void* thread_dnslookup (thread_resolve_arg_t args) {
 
     return NULL;
 
@@ -74,7 +71,7 @@ void* thread_dnslookup (queue* rqueue,
     }
     
     /* Lock output file mutex, write to file, unlock mutex */
-    fprintf(outputfp, "%s,%s\n", hostname, firstipstr);
+    fprintf(args.outputfp, "%s,%s\n", hostname, firstipstr);
 
     /* End while */
 
@@ -92,7 +89,6 @@ int main(int argc, char* argv[]){
     fprintf(stdout, "local variables\n");
     /* Local variables */
     FILE* outputfp = NULL;
-    char errorstr[SBUFSIZE];
     bool request_queue_finished = false;
     queue request_queue;
     int request_queue_size = QUEUEMAXSIZE;
@@ -123,7 +119,7 @@ int main(int argc, char* argv[]){
         args.fname = argv[i];
         args.request_queue = &request_queue;
         args.mutex_queue = &mutex_queue;
-	int rc = pthread_create(threads_request[i-1], NULL, thread_read_ifile, NULL);
+	int rc = pthread_create(threads_request[i-1], NULL, thread_read_ifile, &args);
 	if (rc){
 	    printf("Error creating request thread: return code from pthread_create() is %d\n", rc);
 	    exit(EXIT_FAILURE);
@@ -132,9 +128,14 @@ int main(int argc, char* argv[]){
 
     fprintf(stdout, "res threads\n");
     /* Spawn resolver threads up to MAX_RESOLVER_THREADS */
+    thread_resolve_arg_t args;
+    args.rqueue = &request_queue;
+    args.outputfp = outputfp;
+    args.mutex_ofile = &mutex_ofile;
+    args.mutex_queue = &mutex_queue;
     for(i=0; i<MAX_RESOLVER_THREADS; i++){
         fprintf(stdout, "thread #%d\n", i);
-	int rc = pthread_create(&(threads_resolve[i]), NULL, thread_dnslookup, NULL);
+	int rc = pthread_create(&(threads_resolve[i]), NULL, thread_dnslookup, &args);
 	if (rc){
 	    printf("Error creating resolver thread: return code from pthread_create() is %d\n", rc);
 	    exit(EXIT_FAILURE);
