@@ -52,9 +52,6 @@ void* thread_read_ifile (thread_request_arg_t* args) {
     while(fscanf(inputfp, INPUTFS, hostname) > 0){
 
         /* Add hostname to queue */
-        struct timespec ts;
-        ts.tv_sec = 0;
-        srand(time(NULL));
         while (1) {
 
             /* Lock request queue mutex */
@@ -63,8 +60,7 @@ void* thread_read_ifile (thread_request_arg_t* args) {
             if (queue_is_full(args->request_queue)) {
 
                 /* Wait for queue if full */
-                ts.tv_nsec = rand() % 100000;
-                nanosleep(&ts, &ts);
+                microsleep();
 
             } else {
 
