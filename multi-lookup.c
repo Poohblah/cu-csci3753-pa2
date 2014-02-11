@@ -32,7 +32,8 @@ void microsleep () {
     return;
 }
 
-void* thread_read_ifile (thread_request_arg_t* args) {
+void* thread_read_ifile (void* a) {
+    thread_request_arg_t* args = (thread_request_arg_t*) a;
 
     fprintf(stdout, "hello from read file thread\n");
     FILE* inputfp = NULL;
@@ -51,37 +52,32 @@ void* thread_read_ifile (thread_request_arg_t* args) {
     char hostname[SBUFSIZE];
     while(fscanf(inputfp, INPUTFS, hostname) > 0){
 
-        /* Add hostname to queue */
+        /* Wait for queue to become available */
         while (1) {
 
             /* Lock request queue mutex */
             pthread_mutex_lock(args->mutex_queue);
             
+            /* If queue is full, unlock mutex and wait; else add hostname and unlock */
             if (queue_is_full(args->request_queue)) {
-
-                /* Wait for queue if full */
+                pthread_mutex_unlock(args->mutex_queue);
                 microsleep();
 
-            } else {
-
-                /* malloc space for the hostname */
-                int hs = sizeof(hostname);
-                char* hp = malloc(hs);
-                strncpy(hp, hostname, hs);
-
-                /* Add hostname to queue */
-                fprintf(stdout, "adding hostname to queue (%s): %s\n",args->fname, hp);
-                queue_push(args->request_queue, hp);
-
-                /* Unlock request queue mutex */
-                pthread_mutex_unlock(args->mutex_queue);
-                break;
-            }
-
-            /* Unlock request queue mutex */
-            pthread_mutex_unlock(args->mutex_queue);
+            } else { break; }
 
         }
+
+        /* malloc space for the hostname */
+        int hs = sizeof(hostname);
+        char* hp = malloc(hs);
+        strncpy(hp, hostname, hs);
+
+        /* Add hostname to queue */
+        fprintf(stdout, "adding hostname to queue (%s): %s\n",args->fname, hp);
+        queue_push(args->request_queue, hp);
+
+        /* Unlock request queue mutex */
+        pthread_mutex_unlock(args->mutex_queue);
     
     }
     
@@ -91,9 +87,10 @@ void* thread_read_ifile (thread_request_arg_t* args) {
     return NULL;
 }
 
-void* thread_dnslookup (thread_resolve_arg_t* args) {
+void* thread_dnslookup (void* a) {
+    thread_resolve_arg_t* args = (thread_resolve_arg_t*) a;
 
-    /* While true*/
+    /* While true, pop items off the queue until we can't anymore */
     while (1) {
     
         /* Lock queue mutex, pop item, unlock mutex */
@@ -104,7 +101,7 @@ void* thread_dnslookup (thread_resolve_arg_t* args) {
         /* If queue is not empty, read a hostname and look it up */
         if (hostnamep) {
             char hostname[SBUFSIZE];
-            sprintf(hostname, hostnamep);
+            sprintf(hostname, "%s", hostnamep);
             free(hostnamep);
             fprintf(stdout, "looking up hostname: %s\n", hostname);
 
