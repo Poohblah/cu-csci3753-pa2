@@ -35,12 +35,10 @@ void microsleep () {
 void* thread_read_ifile (void* a) {
     thread_request_arg_t* args = (thread_request_arg_t*) a;
 
-    fprintf(stdout, "hello from read file thread\n");
     FILE* inputfp = NULL;
     
     /* Open Input File */
         
-    fprintf(stdout, "reading from input file: %s\n", args->fname);
     inputfp = fopen(args->fname, "r");
     if(!inputfp){
         char errorstr[SBUFSIZE];
@@ -73,7 +71,6 @@ void* thread_read_ifile (void* a) {
         strncpy(hp, hostname, hs);
 
         /* Add hostname to queue */
-        fprintf(stdout, "adding hostname to queue (%s): %s\n",args->fname, hp);
         queue_push(args->request_queue, hp);
 
         /* Unlock request queue mutex */
@@ -103,7 +100,6 @@ void* thread_dnslookup (void* a) {
             char hostname[SBUFSIZE];
             sprintf(hostname, "%s", hostnamep);
             free(hostnamep);
-            fprintf(stdout, "looking up hostname: %s\n", hostname);
 
             /* Lookup hostname and get IP string */
 
@@ -115,7 +111,6 @@ void* thread_dnslookup (void* a) {
             }
             
             /* Lock output file mutex, write to file, unlock mutex */
-            fprintf(stdout, "%s,%s\n", hostname, firstipstr);
             pthread_mutex_lock(args->mutex_ofile);
             fprintf(args->outputfp, "%s,%s\n", hostname, firstipstr);
             pthread_mutex_unlock(args->mutex_ofile);
@@ -147,7 +142,6 @@ int main(int argc, char* argv[]){
 	return EXIT_FAILURE;
     }
 
-    fprintf(stdout, "local variables\n");
     /* Local variables */
     FILE* outputfp = NULL;
     queue request_queue;
@@ -156,7 +150,6 @@ int main(int argc, char* argv[]){
     pthread_t threads_resolve[MAX_RESOLVER_THREADS];
     int i;
 
-    fprintf(stdout, "open output file\n");
     /* Open Output File */
     outputfp = fopen(argv[(argc-1)], "w");
     if(!outputfp){
@@ -164,7 +157,6 @@ int main(int argc, char* argv[]){
 	return EXIT_FAILURE;
     }
 
-    fprintf(stdout, "create queues and mutexen\n");
     /* Create request queue */
     queue_init(&request_queue, request_queue_size);
 
@@ -172,15 +164,12 @@ int main(int argc, char* argv[]){
     pthread_mutex_t mutex_queue = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_t mutex_ofile = PTHREAD_MUTEX_INITIALIZER;
 
-    fprintf(stdout, "req threads\n");
     /* Spawn requester thread for each input file */
     thread_request_arg_t req_args[argc-2];
     for(i=1; i<(argc-1); i++){
-        fprintf(stdout, "creating args for thread: %d\n", i);
         req_args[i-1].fname = argv[i];
         req_args[i-1].request_queue = &request_queue;
         req_args[i-1].mutex_queue = &mutex_queue;
-        fprintf(stdout, "creating thread for input file: %s\n", req_args[i-1].fname);
 	int rc = pthread_create(&(threads_request[i-1]), NULL, thread_read_ifile, &(req_args[i-1]));
 	if (rc){
 	    printf("Error creating request thread: return code from pthread_create() is %d\n", rc);
@@ -188,7 +177,6 @@ int main(int argc, char* argv[]){
 	}
     }
 
-    fprintf(stdout, "res threads\n");
     /* Spawn resolver threads up to MAX_RESOLVER_THREADS */
     thread_resolve_arg_t res_args;
     res_args.rqueue = &request_queue;
@@ -196,7 +184,6 @@ int main(int argc, char* argv[]){
     res_args.mutex_ofile = &mutex_ofile;
     res_args.mutex_queue = &mutex_queue;
     for(i=0; i<MAX_RESOLVER_THREADS; i++){
-        fprintf(stdout, "thread #%d\n", i);
 	int rc = pthread_create(&(threads_resolve[i]), NULL, thread_dnslookup, &res_args);
 	if (rc){
 	    printf("Error creating resolver thread: return code from pthread_create() is %d\n", rc);
@@ -204,22 +191,14 @@ int main(int argc, char* argv[]){
 	}
     }
 
-    fprintf(stdout, "join req threads\n");
     /* Join requester threads and wait for them to finish */
     for(i=0; i<argc-2; i++){
-        fprintf(stdout, "waiting for thread %d to terminate...\n", i);
 	int rv = pthread_join(threads_request[i], NULL);
 	if (rv) {
             fprintf(stderr, "Error: pthread_join on requester thread returned %d\n", rv);
         }
     }
     request_queue_finished = true;
-    // char* hostnamep;
-    // char hostname[SBUFSIZE];
-    // while (hostnamep = queue_pop(&request_queue)) {
-    //         sprintf(hostname, hostnamep);
-    //         fprintf(stdout, "Queued hostname: %s\n", hostname);
-    // }
 
     /* Join resolver threads and wait for them to finish */
     for(i=0; i<MAX_RESOLVER_THREADS; i++){
