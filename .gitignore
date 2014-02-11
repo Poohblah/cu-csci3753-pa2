@@ -2,9 +2,11 @@
 *~
 \#*\#
 *.swp
+*.swo
 
 #Build Files#
 lookup
+multi-lookup
 pthread-hello
 queueTest
 *.o
