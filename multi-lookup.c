@@ -28,17 +28,9 @@ pthread_mutex_t mutex_ofile = PTHREAD_MUTEX_INITIALIZER;
 
 /* Create condition variables for queue */
 pthread_cond_t cond_queue_empty = PTHREAD_COND_INITIALIZER;
+pthread_cond_t cond_queue_full = PTHREAD_COND_INITIALIZER;
 
 bool request_queue_finished = false;
-
-void microsleep () {
-    struct timespec ts;
-    ts.tv_sec = 0;
-    srand(time(NULL));
-    ts.tv_nsec = rand() % 1000000;
-    nanosleep(&ts, &ts);
-    return;
-}
 
 void* thread_read_ifile (void* a) {
     thread_request_arg_t* args = (thread_request_arg_t*) a;
@@ -58,50 +50,30 @@ void* thread_read_ifile (void* a) {
         return NULL;
     }	
 
-    
     /* Read File and Process*/
     char hostname[SBUFSIZE];
     while(fscanf(inputfp, INPUTFS, hostname) > 0){
-
-        /* While the queue is not full, push a hostname onto the queue and signal */
-
-        /* If the queue is full, wait for a signal */
-
-        /* Wait for queue to become available */
-        while (1) {
-
-            /* Lock request queue mutex */
-            pthread_mutex_lock(&mutex_queue);
-            
-            /* If queue is full, unlock mutex and wait; else add hostname and unlock */
-            if (queue_is_full(args->request_queue)) {
-                if (DEBUG) { fprintf(stderr, "queue is full, waiting to push\n"); }
-                pthread_mutex_unlock(&mutex_queue);
-                microsleep();
-
-            } else { break; }
-
-        }
 
         /* malloc space for the hostname */
         int hs = sizeof(hostname);
         char* hp = malloc(hs);
         strncpy(hp, hostname, hs);
 
-        /* Add hostname to queue */
+        /* Wait for queue to become available, then add hostname to queue */
         if (DEBUG) { fprintf(stderr, "pushing hostname onto queue: %s\n", hostname); }
-        queue_push(args->request_queue, hp);
-
-        /* Unlock request queue mutex */
+        pthread_mutex_lock(&mutex_queue);
+        while ((queue_push(args->request_queue, hp)) == QUEUE_FAILURE) {
+            if (DEBUG) { fprintf(stderr, "queue is full, waiting to push\n"); }
+            pthread_cond_wait(&cond_queue_full, &mutex_queue);
+        }
         pthread_mutex_unlock(&mutex_queue);
 
         /* Signal queue not empty */
         if (DEBUG) { fprintf(stderr, "signalling queue is ready to pop: %s\n", hostname); }
         pthread_cond_signal(&cond_queue_empty);
-    
     }
     
-    /* Close Input File */
+    /* Close input file */
     fclose(inputfp);
 
     return NULL;
@@ -135,6 +107,8 @@ void* thread_dnslookup (void* a) {
         pthread_mutex_unlock(&mutex_queue);
 
         /* After popping a hostname, signal that queue is ready */
+        if (DEBUG) { fprintf(stderr, "signalling queue is ready to push\n"); }
+        pthread_cond_signal(&cond_queue_full);
 
         /* If queue is not empty, read a hostname and look it up */
         char hostname[SBUFSIZE];
