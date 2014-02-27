@@ -46,4 +46,4 @@ run-multi: multi-lookup
 	./multi-lookup input/names*.txt results.txt
 
 test-multi: multi-lookup
-	valgrind ./multi-lookup input/names*.txt results.txt
+	valgrind -v ./multi-lookup input/names*.txt results.txt
