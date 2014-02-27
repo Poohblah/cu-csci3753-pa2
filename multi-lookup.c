@@ -16,10 +16,14 @@
 #include "util.h"
 #include "multi-lookup.h"
 
+#define DEBUG 0
 #define SBUFSIZE 1025
 #define MINARGS 3
 #define USAGE "<inputFilePath> <outputFilePath>"
 #define INPUTFS "%1024s"
+
+/* Create condition variables for queue */
+pthread_cond_t cond_queue_empty = PTHREAD_COND_INITIALIZER;
 
 bool request_queue_finished = false;
 
@@ -27,7 +31,7 @@ void microsleep () {
     struct timespec ts;
     ts.tv_sec = 0;
     srand(time(NULL));
-    ts.tv_nsec = rand() % 100000;
+    ts.tv_nsec = rand() % 1000000;
     nanosleep(&ts, &ts);
     return;
 }
@@ -35,10 +39,13 @@ void microsleep () {
 void* thread_read_ifile (void* a) {
     thread_request_arg_t* args = (thread_request_arg_t*) a;
 
+    if (DEBUG) { fprintf(stderr, "initializing requester thread...\n"); }
+
     FILE* inputfp = NULL;
     
     /* Open Input File */
         
+    if (DEBUG) { fprintf(stderr, "opening input file: %s\n", args->fname); }
     inputfp = fopen(args->fname, "r");
     if(!inputfp){
         char errorstr[SBUFSIZE];
@@ -46,10 +53,15 @@ void* thread_read_ifile (void* a) {
         perror(errorstr);
         return NULL;
     }	
+
     
     /* Read File and Process*/
     char hostname[SBUFSIZE];
     while(fscanf(inputfp, INPUTFS, hostname) > 0){
+
+        /* While the queue is not full, push a hostname onto the queue and signal */
+
+        /* If the queue is full, wait for a signal */
 
         /* Wait for queue to become available */
         while (1) {
@@ -59,6 +71,7 @@ void* thread_read_ifile (void* a) {
             
             /* If queue is full, unlock mutex and wait; else add hostname and unlock */
             if (queue_is_full(args->request_queue)) {
+                if (DEBUG) { fprintf(stderr, "queue is full, waiting to push\n"); }
                 pthread_mutex_unlock(args->mutex_queue);
                 microsleep();
 
@@ -72,10 +85,15 @@ void* thread_read_ifile (void* a) {
         strncpy(hp, hostname, hs);
 
         /* Add hostname to queue */
+        if (DEBUG) { fprintf(stderr, "pushing hostname onto queue: %s\n", hostname); }
         queue_push(args->request_queue, hp);
 
         /* Unlock request queue mutex */
         pthread_mutex_unlock(args->mutex_queue);
+
+        /* Signal queue not empty */
+        if (DEBUG) { fprintf(stderr, "signalling queue is ready to pop: %s\n", hostname); }
+        pthread_cond_signal(&cond_queue_empty);
     
     }
     
@@ -87,51 +105,54 @@ void* thread_read_ifile (void* a) {
 
 void* thread_dnslookup (void* a) {
     thread_resolve_arg_t* args = (thread_resolve_arg_t*) a;
+    
+    if (DEBUG) { fprintf(stderr, "initializing lookup thread...\n"); }
 
-    /* While true, pop items off the queue until we can't anymore */
+    /* While true, pop items off the queue until thread exits */
     while (1) {
     
-        /* Lock queue mutex, pop item, unlock mutex */
+        char* hostnamep;
+
+        /* While the queue is empty and the requester threads are still running,
+           wait for a signal and pop a hostname off the queue */
+        if (DEBUG) { fprintf(stderr, "grabbing hostname from queue\n"); }
         pthread_mutex_lock(args->mutex_queue);
-        char* hostnamep = queue_pop(args->rqueue);
+        while ( (hostnamep = queue_pop(args->rqueue)) == NULL ) {
+            /* if requester threads are finished, then exit */
+            if (request_queue_finished) {
+                if (DEBUG) { fprintf(stderr, "requesters finished, exiting\n"); }
+                pthread_mutex_unlock(args->mutex_queue);
+                return NULL;
+                }
+            /* if requester threads are still running, then wait for signal */
+            if (DEBUG) { fprintf(stderr, "no hostname available on queue, waiting...\n"); }
+            pthread_cond_wait(&cond_queue_empty, args->mutex_queue);
+        }
         pthread_mutex_unlock(args->mutex_queue);
 
+        /* After popping a hostname, signal that queue is ready */
+
         /* If queue is not empty, read a hostname and look it up */
-        if (hostnamep) {
-            char hostname[SBUFSIZE];
-            sprintf(hostname, "%s", hostnamep);
-            free(hostnamep);
+        char hostname[SBUFSIZE];
+        sprintf(hostname, "%s", hostnamep);
+        free(hostnamep);
 
-            /* Lookup hostname and get IP string */
-
-            char firstipstr[INET6_ADDRSTRLEN];
-            if (dnslookup(hostname, firstipstr, sizeof(firstipstr))
-               == UTIL_FAILURE){
-                fprintf(stderr, "dnslookup error: %s\n", hostname);
-                strncpy(firstipstr, "", sizeof(firstipstr));
-            }
-            
-            /* Lock output file mutex, write to file, unlock mutex */
-            pthread_mutex_lock(args->mutex_ofile);
-            fprintf(args->outputfp, "%s,%s\n", hostname, firstipstr);
-            pthread_mutex_unlock(args->mutex_ofile);
-    
-        /* If queue is empty, check if requester threads have finished */
-        } else {
-
-            /* Exit if requester threads have finished */
-            if (request_queue_finished) { break; }
-
-            /* Sleep if requester threads are still active */
-            else { microsleep(); }
-
+        /* Lookup hostname and get IP string */
+        if (DEBUG) { fprintf(stderr, "resolving hostname: %s\n", hostname); }
+        char firstipstr[INET6_ADDRSTRLEN];
+        if (dnslookup(hostname, firstipstr, sizeof(firstipstr))
+           == UTIL_FAILURE){
+            fprintf(stderr, "dnslookup error: %s\n", hostname);
+            strncpy(firstipstr, "", sizeof(firstipstr));
         }
+        
+        /* Lock output file mutex, write to file, unlock mutex */
+        if (DEBUG) { fprintf(stderr, "resolved hostname, writing IP to file: %s %s\n", hostname, firstipstr); }
+        pthread_mutex_lock(args->mutex_ofile);
+        fprintf(args->outputfp, "%s,%s\n", hostname, firstipstr);
+        pthread_mutex_unlock(args->mutex_ofile);
     
-        /* End while */
-
     }
-
-    return NULL;
 }
 
 int main(int argc, char* argv[]){
