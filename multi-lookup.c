@@ -22,6 +22,10 @@
 #define USAGE "<inputFilePath> <outputFilePath>"
 #define INPUTFS "%1024s"
 
+/* Create mutexen for queue and output file */
+pthread_mutex_t mutex_queue = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex_ofile = PTHREAD_MUTEX_INITIALIZER;
+
 /* Create condition variables for queue */
 pthread_cond_t cond_queue_empty = PTHREAD_COND_INITIALIZER;
 
@@ -67,12 +71,12 @@ void* thread_read_ifile (void* a) {
         while (1) {
 
             /* Lock request queue mutex */
-            pthread_mutex_lock(args->mutex_queue);
+            pthread_mutex_lock(&mutex_queue);
             
             /* If queue is full, unlock mutex and wait; else add hostname and unlock */
             if (queue_is_full(args->request_queue)) {
                 if (DEBUG) { fprintf(stderr, "queue is full, waiting to push\n"); }
-                pthread_mutex_unlock(args->mutex_queue);
+                pthread_mutex_unlock(&mutex_queue);
                 microsleep();
 
             } else { break; }
@@ -89,7 +93,7 @@ void* thread_read_ifile (void* a) {
         queue_push(args->request_queue, hp);
 
         /* Unlock request queue mutex */
-        pthread_mutex_unlock(args->mutex_queue);
+        pthread_mutex_unlock(&mutex_queue);
 
         /* Signal queue not empty */
         if (DEBUG) { fprintf(stderr, "signalling queue is ready to pop: %s\n", hostname); }
@@ -116,19 +120,19 @@ void* thread_dnslookup (void* a) {
         /* While the queue is empty and the requester threads are still running,
            wait for a signal and pop a hostname off the queue */
         if (DEBUG) { fprintf(stderr, "grabbing hostname from queue\n"); }
-        pthread_mutex_lock(args->mutex_queue);
+        pthread_mutex_lock(&mutex_queue);
         while ( (hostnamep = queue_pop(args->rqueue)) == NULL ) {
             /* if requester threads are finished, then exit */
             if (request_queue_finished) {
                 if (DEBUG) { fprintf(stderr, "requesters finished, exiting\n"); }
-                pthread_mutex_unlock(args->mutex_queue);
+                pthread_mutex_unlock(&mutex_queue);
                 return NULL;
                 }
             /* if requester threads are still running, then wait for signal */
             if (DEBUG) { fprintf(stderr, "no hostname available on queue, waiting...\n"); }
-            pthread_cond_wait(&cond_queue_empty, args->mutex_queue);
+            pthread_cond_wait(&cond_queue_empty, &mutex_queue);
         }
-        pthread_mutex_unlock(args->mutex_queue);
+        pthread_mutex_unlock(&mutex_queue);
 
         /* After popping a hostname, signal that queue is ready */
 
@@ -148,9 +152,9 @@ void* thread_dnslookup (void* a) {
         
         /* Lock output file mutex, write to file, unlock mutex */
         if (DEBUG) { fprintf(stderr, "resolved hostname, writing IP to file: %s %s\n", hostname, firstipstr); }
-        pthread_mutex_lock(args->mutex_ofile);
+        pthread_mutex_lock(&mutex_ofile);
         fprintf(args->outputfp, "%s,%s\n", hostname, firstipstr);
-        pthread_mutex_unlock(args->mutex_ofile);
+        pthread_mutex_unlock(&mutex_ofile);
     
     }
 }
@@ -182,16 +186,11 @@ int main(int argc, char* argv[]){
     /* Create request queue */
     queue_init(&request_queue, request_queue_size);
 
-    /* Create mutexen for queue and output file */
-    pthread_mutex_t mutex_queue = PTHREAD_MUTEX_INITIALIZER;
-    pthread_mutex_t mutex_ofile = PTHREAD_MUTEX_INITIALIZER;
-
     /* Spawn requester thread for each input file */
     thread_request_arg_t req_args[argc-2];
     for(i=1; i<(argc-1); i++){
         req_args[i-1].fname = argv[i];
         req_args[i-1].request_queue = &request_queue;
-        req_args[i-1].mutex_queue = &mutex_queue;
 	int rc = pthread_create(&(threads_request[i-1]), NULL, thread_read_ifile, &(req_args[i-1]));
 	if (rc){
 	    printf("Error creating request thread: return code from pthread_create() is %d\n", rc);
@@ -203,8 +202,6 @@ int main(int argc, char* argv[]){
     thread_resolve_arg_t res_args;
     res_args.rqueue = &request_queue;
     res_args.outputfp = outputfp;
-    res_args.mutex_ofile = &mutex_ofile;
-    res_args.mutex_queue = &mutex_queue;
     for(i=0; i<MAX_RESOLVER_THREADS; i++){
 	int rc = pthread_create(&(threads_resolve[i]), NULL, thread_dnslookup, &res_args);
 	if (rc){
